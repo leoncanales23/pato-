@@ -1,0 +1,10 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /controles/{controlId}/{file} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.contentType == 'application/pdf' && request.resource.size < 15 * 1024 * 1024;
+      allow update, delete: if false; // los PDF emitidos no se sobrescriben
+    }
+  }
+}

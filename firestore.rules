@@ -1,0 +1,49 @@
+rules_version = '2';
+// VIBRAALTO COLDCHAIN — reglas por rol. Perfil en usuarios/{uid}: { nombre, rol, activo }.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function perfil() { return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data; }
+    function activo() { return request.auth != null && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && perfil().activo != false; }
+    function rol(roles) { return activo() && perfil().rol in roles; }
+    function editores() { return ['ADMINISTRADOR', 'ENCARGADO', 'OPERADOR']; }
+    function cerrado(d) { return d.estado in ['FINALIZADO', 'COMPARTIDO']; }
+
+    match /usuarios/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || rol(['ADMINISTRADOR']));
+      allow write: if rol(['ADMINISTRADOR']);
+    }
+
+    match /meta/contadores {
+      allow read, write: if rol(['ADMINISTRADOR', 'ENCARGADO']);
+    }
+
+    match /controles/{id} {
+      allow read: if activo();
+      allow create: if rol(['ADMINISTRADOR', 'ENCARGADO'])
+        && request.resource.data.numero is string && request.resource.data.pallets is list;
+      // Un registro cerrado solo cambia para: reabrirlo (ADMIN) o registrar que se compartió.
+      allow update: if rol(editores()) && request.resource.data.id == resource.data.id && (
+        !cerrado(resource.data)
+        || rol(['ADMINISTRADOR'])
+        || (rol(['ENCARGADO']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['estado', 'compartidos']))
+      );
+      allow delete: if false; // nunca se borra historial operativo
+
+      // Historial de cambios y versiones finalizadas: solo agregar, nunca modificar ni borrar.
+      match /historial/{h} {
+        allow read: if activo();
+        allow create: if rol(editores()) && request.resource.data.usuario is string;
+        allow update, delete: if false;
+      }
+      match /versiones/{v} {
+        allow read: if activo();
+        allow create: if rol(['ADMINISTRADOR', 'ENCARGADO']);
+        allow update, delete: if false;
+      }
+    }
+
+    // Sensor Bridge (BETA): sin credenciales; solo configuración descriptiva.
+    match /sensorBridge/{doc} { allow read: if activo(); allow write: if rol(['ADMINISTRADOR']); }
+    match /sensorAsociaciones/{id} { allow read: if activo(); allow write: if rol(['ADMINISTRADOR']); }
+  }
+}
